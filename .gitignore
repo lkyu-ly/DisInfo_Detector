@@ -1,0 +1,6 @@
+__pycache__/
+trash-bin/
+output/
+fact_check/
+data/cache/gpt-4o/
+data/cache/gpt-4o-mini/
