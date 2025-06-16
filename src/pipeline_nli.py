@@ -91,14 +91,28 @@ def run_verification(data, claim_verifier, search_res_num):
 
         return dict_item, prompt_tok_cnt, response_tok_cnt
 
+    # ####### Sequential processing #######    
+    # verification_results = []
+    # total_prompt_tok_cnt = 0
+    # total_resp_tok_cnt = 0
+    # for dict_item in tqdm(data, desc="Processing claims"):
+    #     verification_result, prompt_tok_cnt, response_tok_cnt = process_verification(dict_item)
+    #     verification_results.append(verification_result)
+    #     total_prompt_tok_cnt += prompt_tok_cnt
+    #     total_resp_tok_cnt += response_tok_cnt
+
+    # ####### Parallel processing #######
     verification_results = []
     total_prompt_tok_cnt = 0
     total_resp_tok_cnt = 0
-    for dict_item in tqdm(data, desc="Processing claims"):
-        verification_result, prompt_tok_cnt, response_tok_cnt = process_verification(dict_item)
-        verification_results.append(verification_result)
-        total_prompt_tok_cnt += prompt_tok_cnt
-        total_resp_tok_cnt += response_tok_cnt
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all tasks to the executor and wrap with tqdm for a progress bar
+        futures = [executor.submit(process_verification, item) for item in data]
+        for future in tqdm(futures, desc="Processing claims"):
+            verification_result, prompt_tok_cnt, response_tok_cnt = future.result()
+            verification_results.append(verification_result)
+            total_prompt_tok_cnt += prompt_tok_cnt
+            total_resp_tok_cnt += response_tok_cnt
 
     print(f"Claim verification is done! Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")
     logging.info(f"Claim verification is done! Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")

@@ -2,6 +2,7 @@ import json
 import os
 
 from get_response import GetResponse
+from prompts import VERIFICATION_INSTRUCTION_BINARY_NLI, VERIFICATION_INSTRUCTION_TRINARY
 
 
 class ClaimVerifier():
@@ -38,20 +39,18 @@ class ClaimVerifier():
             self.system_message = "You are a helpful assistant who can verify the truthfulness of a claim against reliable external world knowledge."
             self.prompt_initial_temp = self.get_initial_prompt_template()
 
-    def get_instruction_template(self):
-        prompt_temp = ''
+    def get_initial_prompt_template(self):
+
         if self.label_n == 2:
-            prompt_temp = open("./prompt/verification_instruction_binary_nli.txt", "r").read()
+            prompt_temp = VERIFICATION_INSTRUCTION_BINARY_NLI
         elif self.label_n == 3:
-            prompt_temp = open("./prompt/verification_instruction_trinary.txt", "r").read()
+            prompt_temp = VERIFICATION_INSTRUCTION_TRINARY
         else:
             raise ValueError(f"Label number {self.label_n} is not supported.")
-        return prompt_temp
 
-    def get_initial_prompt_template(self):
-        prompt_temp = self.get_instruction_template()
         with open(self.demon_path, "r") as f:
             example_data = [json.loads(line) for line in f if line.strip()]
+
         element_lst = []
         for dict_item in example_data:
             claim = dict_item["claim"]

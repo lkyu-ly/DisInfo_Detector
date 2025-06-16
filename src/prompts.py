@@ -198,3 +198,135 @@ Facts:
 
 Sentence: {{}}
 Facts:\n"""
+
+VERIFICATION_INSTRUCTION_BINARY_NLI = """You need to judge whether a claim is supported or not by Google search results. When doing the task, take into consideration whether the link of the search result is of a trustworthy source. 
+
+Below are the definitions of the two categories:
+
+Supported: A claim is supported by the search results if everything in the claim is supported and nothing is contradicted by the search results. There can be some search results that are not fully related to the claim.
+Unsupported: If a claim is not supported by the search results, mark it as unsupported.
+
+For your decision, you must only output the word 'Supported', or the word 'Unsupported', nothing else.
+
+Here are some examples:
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}
+
+Claim: {}
+
+{}
+
+Your decision: {}"""
+
+VERIFICATION_INSTRUCTION_TRINARY = """You need to judge whether a claim is supported or contradicted by Google search results, or whether there is no enough information to make the judgement. When doing the task, take into consideration whether the link of the search result is of a trustworthy source. Mark your answer with ### signs.
+
+Below are the definitions of the three categories:
+
+Supported: A claim is supported by the search results if everything in the claim is supported and nothing is contradicted by the search results. There can be some search results that are not fully related to the claim.
+Contradicted: A claim is contradicted by the search results if something in the claim is contradicted by some search results. There should be no search result that supports the same part.
+Inconclusive: A claim is inconclusive based on the search results if:
+- a part of a claim cannot be verified by the search results,
+- a part of a claim is supported and contradicted by different pieces of evidence,
+- the entity/person mentioned in the claim has no clear referent (e.g., "the approach", "Emily", "a book").
+
+Here are some examples:
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###
+
+Claim: {}
+
+{}
+
+Your decision: ###{}###"""
