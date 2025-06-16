@@ -1,19 +1,8 @@
-"""
-File: search_API.py
-
-Description:
-This file is an modified version based on the amazing VeriScore repository.
-VeriScore Repo: https://github.com/Yixiao-Song/VeriScore
-"""
-
 import json
 import os
-import pdb
 from ast import literal_eval
 
 import requests
-from tqdm import tqdm
-
 
 class SearchAPI():
     def __init__(self):
@@ -23,7 +12,7 @@ class SearchAPI():
         self.headers = {'X-API-KEY': self.serper_key,
                         'Content-Type': 'application/json'}
         # cache related
-        self.cache_file = "data/cache/search_cache.json"
+        self.cache_file = "cache/search_cache.json"
         self.cache_dict = self.load_cache()
         self.add_n = 0
         self.save_interval = 10

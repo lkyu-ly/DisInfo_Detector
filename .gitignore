@@ -1,6 +1,10 @@
 __pycache__/
+.DS_Store
 trash-bin/
 output/
 fact_check/
 data/cache/gpt-4o/
 data/cache/gpt-4o-mini/
+cache/
+cache_hist/
+fact_checking_dataset/

@@ -1,422 +1,156 @@
-"""
-File: pipeline_nli.py
-
-Description:
-This file is an modified version based on the amazing VeriScore repository.
-VeriScore Repo: https://github.com/Yixiao-Song/VeriScore
-"""
-
-
-
 import argparse
-import asyncio
 import json
 import logging
 import os
-from collections import defaultdict
-from pprint import pprint
-import time
-
-import spacy
+from tqdm import tqdm
 
 from claim_extractor import ClaimExtractor
 from claim_verifier import ClaimVerifier
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Chroma
 from search_API import SearchAPI
-from search_API_asy import AsyncSearchAPI
-from third_party.specified_number_claims import (
-    CLAIM_LEVEL_DECOMPOSE_NUM_PROMPT_TEMPLATE,
-    RESPONSE_LEVEL_DECOMPOSE_NUM_PROMPT_TEMPLATE,
-    RESPONSE_LEVEL_DECOMPOSE_SINGLE_PROMPT_TEMPLATE)
+from evaluate_result import evaluate
+from concurrent.futures import ThreadPoolExecutor
 
-from tqdm import tqdm
-from utils import evaluate
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 
-abstain_responses = ["I'm sorry, I cannot fulfill that request.",
-                     "I'm sorry, I can't fulfill that request.",
-                     "I'm sorry, but I cannot fulfill that request.",
-                     "I'm sorry, but I can't fulfill that request.",
-                     "Sorry, but I can't fulfill that request.",
-                     "Sorry, I can't do that."]
+def run_extraction(data, claim_extractor, decompose_method, specified_number_of_claims=8):
+    logging.info(f"Running extraction based on decompose method: {decompose_method}")
 
-class Pipeline(object):
-    def __init__(self,
-                 decompose_method='veriscore',
-                 model_name_extraction='gpt-4o-mini',
-                 model_name_verification='gpt-4o-mini',
-                 use_external_extraction_model=False,
-                 use_external_verification_model=False,
-                 use_nli_verification=False,
-                 knowledge_base="google", # google or wikipedia
-                 knowledge_collection_name="wice_test",
-                 data_dir='./data',
-                 cache_dir='./data/cache',
-                 output_dir='./data_cache',
-                 knowledge_base_dir=None,
-                 label_n=2,
-                 search_res_num=10,
-                 input_level="claim",
-                 use_self_diagnosis=False,
-                 model_name_diagnosis=None,
-                 specified_number_of_claims=None,
-                 use_self_detection=False
-                ):
-        self.data_dir = data_dir
-        self.output_dir = output_dir
-        self.cache_dir = cache_dir
-        self.decompose_method = decompose_method
-        self.knowledge_base = knowledge_base
-        self.knowledge_collection_name = knowledge_collection_name
-        self.vector_store = None
-        self.embedding_func = None
-        self.use_nli_verification = use_nli_verification
-        self.input_level = input_level
-        self.use_self_diagnosis = use_self_diagnosis
-        self.model_name_diagnosis = model_name_diagnosis
-        self.specified_number_of_claims = specified_number_of_claims
-        self.use_self_detection = use_self_detection
+    def process_claim(dict_item):
+        response = dict_item["response"].strip()
 
-        if self.knowledge_base == 'wikipedia':
-            self.knowledge_base_dir = knowledge_base_dir
-            model_kwargs = {'trust_remote_code': True, }
-            self.embedding_func = HuggingFaceEmbeddings(model_name="dunzhang/stella_en_400M_v5", model_kwargs=model_kwargs)
-            self.vector_store = Chroma(
-                collection_name=self.knowledge_collection_name,
-                embedding_function=self.embedding_func,
-                persist_directory=self.knowledge_base_dir,
-            )
-
-
-        os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(self.cache_dir, exist_ok=True)
-
-        self.spacy_nlp = spacy.load('en_core_web_sm')
-
-        self.system_message_extraction = "You are a helpful assistant who can extract verifiable atomic claims from a piece of text. Each atomic fact should be verifiable against reliable external world knowledge (e.g., via Wikipedia)"
-        print(f"cache_dir: {self.cache_dir}")
-        self.claim_extractor = ClaimExtractor(model_name_extraction, cache_dir=self.cache_dir,
-                                              use_external_model=use_external_extraction_model, input_level=self.input_level,
-                                              model_name_diagnosis=self.model_name_diagnosis)
-        if self.decompose_method == 'specified_number':
-            if self.input_level == "response":
-                self.claim_extractor.specified_number_prompt_template = RESPONSE_LEVEL_DECOMPOSE_NUM_PROMPT_TEMPLATE
-            else:
-                self.claim_extractor.specified_number_prompt_template = CLAIM_LEVEL_DECOMPOSE_NUM_PROMPT_TEMPLATE
-        if self.decompose_method == 'summarization':
-            assert self.input_level == "response", "Summarization method is only applicable for response-level input"
-            self.claim_extractor.summarization_prompt_template = RESPONSE_LEVEL_DECOMPOSE_SINGLE_PROMPT_TEMPLATE
-        self.fetch_search = SearchAPI()
-        self.fetch_search_asy = AsyncSearchAPI(max_concurrent_requests=10)
-
-        demon_dir = os.path.join(self.data_dir, 'demos')
-        self.model_name_verification = model_name_verification
-        self.model_name_extraction = model_name_extraction
-        self.claim_verifier = ClaimVerifier(model_name=model_name_verification, label_n=label_n,
-                                            cache_dir=self.cache_dir, demon_dir=demon_dir,
-                                            use_external_model=use_external_verification_model,
-                                            use_nli_verification=use_nli_verification
-                                        )
-        self.label_n = label_n
-        self.search_res_num = search_res_num
-
-    async def run(self, data, input_file_name):
-        # Initialize semaphores with optimized concurrency limits
-        batch_size = 10
-        search_batch_size = 1
-        semaphore = asyncio.Semaphore(batch_size)  # Increased for better claim processing throughput
-        search_semaphore = asyncio.Semaphore(search_batch_size)  # Reduced for search API to avoid rate limits
-        
-        ### extract claims ###
-        output_file = f"claims_{input_file_name}.jsonl"
-        output_path = os.path.join(self.output_dir, output_file)
-        logging.info(f"Running pipeline for {self.output_dir}")
-
-        async def process_claim(dict_item):
-            async with semaphore:
-                ori_claim = dict_item["claim"].strip()
-                prompt_source = dict_item["source"]
-                annot_label = dict_item.get("label", None)
-
-                # skip abstained responses
-                if ori_claim.strip() in abstain_responses:
-                    return {
-                        "question": "",
-                        "claim": ori_claim,
-                        "abstained": True,
-                        "source": prompt_source,
-                    }
-
-                question = ''
-                # print(f"Using [{self.decompose_method}] decomposition method")
-                if self.decompose_method == 'veriscore':
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = await self.async_veriscore_extractor(ori_claim)
-                elif self.decompose_method == 'factscore':
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = await self.claim_extractor.factscore_extractor(ori_claim)
-                elif self.decompose_method == 'original':
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = [[ori_claim]], [ori_claim], 0, 0
-                elif self.decompose_method == 'wice':
-                    self.claim_extractor.get_model_response.stop_tokens = ["\n\nSentence:"]
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = await self.claim_extractor.wice_extractor(ori_claim)
-                elif 'specified_number' in self.decompose_method.lower():
-                    self.claim_extractor.get_model_response.stop_tokens = ["\nInput: ", "\nClaim: "]
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = await self.claim_extractor.specified_number_extractor(ori_claim, number_of_claims=self.specified_number_of_claims)
-                elif self.decompose_method == 'summarization':
-                    self.claim_extractor.get_model_response.stop_tokens = ["\n"]
-                    claim_list, all_claims, prompt_tok_cnt, response_tok_cnt = await self.claim_extractor.summarization_extractor(ori_claim)
-                else:
-                    raise ValueError(f"Unknown decompose method: {self.decompose_method}")
-                
-                # for i, claim in enumerate(all_claims):
-                #     if self.decompose_method != 'original':  # Don't print for original method since it's just the same claim
-                #         print(f"[Claim-{i+1}]: {claim}")
-                
-                processed_claims = []
-                diagnosis_sections = None
-                error_detection_sections = None
-                # if self.use_self_diagnosis:
-                #     processed_claims, diagnosis_sections = await self.claim_extractor.self_diagnosis(ori_claim, all_claims)
-                #     pprint(f"diagnosis_sections: \n{diagnosis_sections}")
-                # else:
-                #     error_detection_sections = await self.claim_extractor.self_detection(ori_claim, all_claims)
-                #     pprint(f"error_detection_sections: \n{error_detection_sections}")
-
-                return {
-                    "question": question.strip(),
-                    "prompt_source": prompt_source,
-                    "ori_claim": ori_claim,
-                    "annot_label": annot_label,
-                    "prompt_tok_cnt": prompt_tok_cnt,
-                    "response_tok_cnt": response_tok_cnt,
-                    "model_name_extraction": self.model_name_extraction,
-                    "model_name_verification": self.model_name_verification,
-                    "decompose_method": self.decompose_method,
-                    "search_res_num": self.search_res_num,
-                    "abstained": False,
-                    "claim_list": claim_list,
-                    "all_claims": all_claims,
-                    "use_self_diagnosis": self.use_self_diagnosis,
-                    "processed_claims": processed_claims,
-                    "diagnosis_sections": diagnosis_sections,
-                    "error_detection_sections": error_detection_sections,
-                }
-
-        # Process claims concurrently with batching and progress tracking
-        extracted_claims = []
-        # total_batches = (len(data) + batch_size - 1) // batch_size
-        
-        with tqdm(total=len(data), desc="Processing claims") as pbar:
-            for i in range(0, len(data), batch_size):
-                batch = data[i:i + batch_size]
-                tasks = [process_claim(dict_item) for dict_item in batch]
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                valid_results = [r for r in batch_results if not isinstance(r, Exception)]
-                extracted_claims.extend(valid_results)
-                pbar.update(len(batch))
-
-        # Write results to file
-        with open(output_path, "w") as f:
-            for output_dict in extracted_claims:
-                f.write(json.dumps(output_dict) + "\n")
-
-        print(f"claim extraction is done! saved to {output_path}")
-        logging.info(f"claim extraction is done! saved to {output_path}")
-
-        output_file = f"evidence_{input_file_name}.jsonl"
-        if self.knowledge_base == "wikipedia":
-            output_file = f"evidence_{input_file_name}_wikipedia.jsonl"
-        output_path = os.path.join(self.output_dir, output_file)
-
-        async def process_evidence(dict_item):
-            if dict_item['abstained']:
-                return dict_item
-
-            async with search_semaphore:
-                claim_lst = dict_item["all_claims"]
-                # if self.use_self_diagnosis:
-                #     claim_lst = dict_item["processed_claims"]
-                if claim_lst == ["No verifiable claim."]:
-                    dict_item["claim_search_results"] = []
-                    return dict_item
-
-                try:
-                    claim_snippets = await self.async_get_snippets(claim_lst)
-                    dict_item["claim_search_results"] = claim_snippets
-                except Exception as e:
-                    logger.error(f"Error processing evidence for claim: {e}")
-                    dict_item["claim_search_results"] = []
-                    dict_item["evidence_error"] = str(e)
-                
-                return dict_item
-
-        # Process evidence search concurrently with batching and progress tracking
-        searched_evidence_dict = []
-        with tqdm(total=len(extracted_claims), desc="Gathering evidence") as pbar:
-            for i in range(0, len(extracted_claims), batch_size):
-                batch = extracted_claims[i:i + batch_size]
-                tasks = [process_evidence(dict_item) for dict_item in batch]
-                batch_results = await asyncio.gather(*tasks, return_exceptions=True)
-                valid_results = [r for r in batch_results if not isinstance(r, Exception)]
-                searched_evidence_dict.extend(valid_results)
-                pbar.update(len(batch))
-
-        # Write results to file
-        with open(output_path, "w") as f:
-            for dict_item in searched_evidence_dict:
-                f.write(json.dumps(dict_item) + "\n")
-                f.flush()
-        print(f"evidence searching is done! saved to {output_path}")
-        logging.info(f"evidence searching is done! saved to {output_path}")
-        verification_dir = os.path.join(self.output_dir, 'model_output')
-        os.makedirs(verification_dir, exist_ok=True)
-        output_file = f'verification_{input_file_name}_{self.label_n}.jsonl'
-        output_path = os.path.join(verification_dir, output_file)
-
-        total_prompt_tok_cnt = 0
-        total_resp_tok_cnt = 0
-
-        async def process_verification(dict_item):
-            if dict_item['abstained']:
-                return dict_item, 0, 0
-
-            async with semaphore:
-                try:
-                    claim_search_results = dict_item["claim_search_results"]
-                    claim_verify_res_dict, prompt_tok_cnt, response_tok_cnt = await self.async_verifying_claim(
-                        claim_search_results, search_res_num=self.search_res_num)
-                    dict_item["claim_verification_result"] = claim_verify_res_dict
-                except Exception as e:
-                    logger.error(f"Error in verification: {e}")
-                    dict_item["claim_verification_result"] = {"error": str(e)}
-                    return dict_item, 0, 0
-
-                return dict_item, prompt_tok_cnt, response_tok_cnt
-
-        # Process verifications with improved batching and error handling
-        verification_results = []
-        for i in range(0, len(searched_evidence_dict), batch_size):
-            batch = searched_evidence_dict[i:i + batch_size]
-            tasks = [process_verification(dict_item) for dict_item in batch]
-            
-            with tqdm(total=len(batch), desc=f"Verifying claims batch {i//batch_size + 1}") as pbar:
-                for f in asyncio.as_completed(tasks):
-                    try:
-                        result = await f
-                        verification_results.append(result)
-                    except Exception as e:
-                        logger.error(f"Verification task failed: {e}")
-                        verification_results.append(({"error": str(e)}, 0, 0))
-                    pbar.update(1)
-
-        # Write results and accumulate token counts
-        with open(output_path, "w") as f:
-            for dict_item, prompt_tok_cnt, response_tok_cnt in verification_results:
-                f.write(json.dumps(dict_item) + "\n")
-                total_prompt_tok_cnt += prompt_tok_cnt
-                total_resp_tok_cnt += response_tok_cnt
-
-        print(f"claim verification is done! saved to {output_path}")
-        logging.info(f"claim verification is done! saved to {output_path}")
-        print(f"Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")
-        logging.info(f"Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")
-
-        eval_data = [json.loads(x) for x in open(output_path, 'r').readlines()]
-        metrics_dict = evaluate(eval_data)
-        with open(os.path.join(self.output_dir, 'metrics.json'), 'w') as f:
-            json.dump(metrics_dict, f)
-    
-    async def async_get_snippets(self, claim_lst):
-        if self.knowledge_base == "google":
-            return await self.fetch_search_asy.get_snippets(claim_lst)
-        elif self.knowledge_base == "wikipedia":
-            text_claim_snippets_dict = {}
-            for claim in claim_lst:
-                retr_docs = self.vector_store.similarity_search(claim, k=self.search_res_num)
-                text_claim_snippets_dict[claim] = [
-                    {'snippet': doc.page_content, 'metadata': doc.metadata, 'knowledge_source': 'wikipedia'} for doc in retr_docs
-                ]
-            return text_claim_snippets_dict
+        if 'specified_number' in decompose_method.lower():
+            claim_extractor.get_model_response.stop_tokens = ["\nInput: ", "\nClaim: "]
+            claim_list, prompt_tok_cnt, response_tok_cnt = claim_extractor.specified_number_extractor(response, number_of_claims=specified_number_of_claims)
+        elif decompose_method == 'summarization':
+            claim_extractor.get_model_response.stop_tokens = ["\n"]
+            claim_list, prompt_tok_cnt, response_tok_cnt = claim_extractor.summarization_extractor(response)
         else:
-            raise ValueError(f"Unknown knowledge base: {self.knowledge_base}")
-        
+            raise ValueError(f"Unknown decompose method: {decompose_method}")
 
-    async def async_verifying_claim(self, claim_search_results, search_res_num=5):
-        return await self.claim_verifier.async_verifying_claim(claim_search_results, search_res_num=search_res_num)
+        return {
+            "prompt_source": dict_item["prompt_source"],
+            "response": response,
+            "claim_list": claim_list,
+            "annot_label": dict_item.get("label", None),
+            "prompt_tok_cnt": prompt_tok_cnt,
+            "response_tok_cnt": response_tok_cnt,
+        }
+
+    ####### Sequential processing #######
+    # extracted_claims = []
+    # for dict_item in tqdm(data, desc="Processing claims"):
+    #     extracted_claims.append(process_claim(dict_item))
+
+    ####### Parallel processing #######
+    extracted_claims = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all tasks to the executor and wrap with tqdm for a progress bar
+        futures = [executor.submit(process_claim, item) for item in data]
+        for future in tqdm(futures, desc="Processing claims"):
+            extracted_claims.append(future.result())
     
-    async def async_veriscore_extractor(self, response):
-        return await self.claim_extractor.veriscore_extractor(response)
+    return extracted_claims
+
+def run_searching(data, claim_searcher):
+    def process_evidence(dict_item):
+
+        claim_lst = dict_item["claim_list"]
+        try:
+            claim_snippets = claim_searcher.get_snippets(claim_lst)
+            dict_item["claim_search_results"] = claim_snippets
+        except Exception as e:
+            logger.error(f"Error processing evidence for claim: {e}")
+            dict_item["claim_search_results"] = []
+        
+        return dict_item
+
+    ####### Sequential processing #######    
+    # searched_evidence_dict = []
+    # for dict_item in tqdm(data, desc="Processing claims"):
+    #     searched_evidence_dict.append(process_evidence(dict_item))
+
+    ####### Parallel processing #######
+    searched_evidence_dict = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        # Submit all tasks to the executor and wrap with tqdm for a progress bar
+        futures = [executor.submit(process_evidence, item) for item in data]
+        for future in tqdm(futures, desc="Processing claims"):
+            searched_evidence_dict.append(future.result())
+
+    return searched_evidence_dict
+
+def run_verification(data, claim_verifier, search_res_num):
+    def process_verification(dict_item):
+        claim_search_results = dict_item["claim_search_results"]
+        claim_verify_res_dict, prompt_tok_cnt, response_tok_cnt = claim_verifier.verifying_claim(claim_search_results, search_res_num=search_res_num)
+        dict_item["claim_verification_result"] = claim_verify_res_dict
+
+        return dict_item, prompt_tok_cnt, response_tok_cnt
+
+    verification_results = []
+    total_prompt_tok_cnt = 0
+    total_resp_tok_cnt = 0
+    for dict_item in tqdm(data, desc="Processing claims"):
+        verification_result, prompt_tok_cnt, response_tok_cnt = process_verification(dict_item)
+        verification_results.append(verification_result)
+        total_prompt_tok_cnt += prompt_tok_cnt
+        total_resp_tok_cnt += response_tok_cnt
+
+    print(f"Claim verification is done! Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")
+    logging.info(f"Claim verification is done! Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}")
+
+    return verification_results
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default='./data')
-    parser.add_argument("--input_dir", type=str, default='./input')
     parser.add_argument("--input_file", type=str, required=True)
-    parser.add_argument("--output_dir", type=str, default='./data')
-    parser.add_argument("--cache_dir", type=str, default='./data/cache')
-    parser.add_argument("--model_name_extraction", type=str, default="gpt-4o-mini")
-    parser.add_argument("--model_name_verification", type=str, default="")
-    parser.add_argument("--model_name_diagnosis", type=str, default="gpt-4o-mini")
+    parser.add_argument("--output_file", type=str, required=True)
+    parser.add_argument("--demon_dir", type=str, default='./demos')
+    parser.add_argument("--cache_dir", type=str, default='./cache')
+    parser.add_argument("--model_name_extraction", type=str, default="gpt-4o")
+    parser.add_argument("--model_name_verification", type=str, default="gpt-4o-mini")
     parser.add_argument("--label_n", type=int, default=2, choices=[2, 3])
     parser.add_argument("--search_res_num", type=int, default=10)
     parser.add_argument("--decompose_method", type=str, default='veriscore', choices=['original', 'veriscore', 'factscore', 'wice', 'specified_number', 'summarization'])
-    parser.add_argument("--knowledge_base", type=str, default="google", choices=["google", "wikipedia"])
-    parser.add_argument("--knowledge_collection_name", type=str, default="wice_test")
-    parser.add_argument("--knowledge_base_dir", type=str, default="./wice_test_chroma_db")
-    parser.add_argument("--use_nli_verification", action="store_true")
-    parser.add_argument("--input_level", type=str, default="response", choices=["claim", "response"])
-    parser.add_argument("--use_self_diagnosis", action="store_true")
-    parser.add_argument("--specified_number_of_claims", type=int, default=-1)
-    parser.add_argument("--use_self_detection", action="store_true")
-    parser.add_argument("--data_source", type=str, default="")
+    parser.add_argument("--specified_number_of_claims", type=int, default=8)
+    parser.add_argument("--stage", type=str, choices=['extraction', 'searching', 'verification', 'evaluation'], required=True)
     args = parser.parse_args()
 
-    if args.knowledge_base == "wikipedia":
-        assert os.path.exists(args.knowledge_base_dir), "Knowledge base directory does not exist"
-    
-    if args.use_self_diagnosis:
-        if args.model_name_diagnosis == "":
-            args.model_name_diagnosis = args.model_name_extraction
-    
-    if args.decompose_method == 'specified_number':
-        assert args.specified_number_of_claims != -1, "specified_number_of_claims must be provided"
-    
-
     print("args: ", args)
-    pipe = Pipeline(model_name_extraction=args.model_name_extraction,
-                    model_name_verification=args.model_name_verification,
-                    decompose_method=args.decompose_method,
-                    data_dir=args.data_dir,
-                    output_dir=args.output_dir,
-                    cache_dir=args.cache_dir,
-                    label_n=args.label_n,
-                    search_res_num=args.search_res_num,
-                    use_nli_verification=args.use_nli_verification,
-                    knowledge_base=args.knowledge_base,
-                    knowledge_collection_name=args.knowledge_collection_name,
-                    knowledge_base_dir=args.knowledge_base_dir,
-                    input_level=args.input_level,
-                    use_self_diagnosis=args.use_self_diagnosis,
-                    model_name_diagnosis=args.model_name_diagnosis,
-                    specified_number_of_claims=args.specified_number_of_claims,
-                    use_self_detection=args.use_self_detection
-                )
 
-    input_file_name = "".join(args.input_file.split('.')[:-1])
-    input_path = os.path.join(args.input_dir, args.input_file)
-    if 'jsonl' in args.input_file:
-        with open(input_path, "r") as f:
-            data = [json.loads(x) for x in f.readlines() if x.strip()]
-    else:
-        data = json.load(open(input_path, 'r'))
-    print("data loaded.")
+    # Initialize components
+    os.makedirs(args.cache_dir, exist_ok=True)
 
-    if args.data_source != "":
-        split_data = [x for x in data if x['source'] == args.data_source]
-        data = split_data
+    # Load and process data
+    with open(args.input_file, "r") as f:
+        input_data = [json.loads(x) for x in f.readlines() if x.strip()]
+    print(f"Data loaded from {args.input_file}, total {len(input_data)} items.")
 
-    asyncio.run(pipe.run(data, input_file_name))
+    if args.stage == 'extraction':
+        # Initialize claim extractor
+        claim_extractor = ClaimExtractor(args.model_name_extraction, cache_dir=args.cache_dir)
+        output_data = run_extraction(data=input_data, claim_extractor=claim_extractor, 
+                                     decompose_method=args.decompose_method, specified_number_of_claims=args.specified_number_of_claims)
+
+    elif args.stage == 'searching':
+        # Initialize search API
+        claim_searcher = SearchAPI()
+        output_data = run_searching(data=input_data, claim_searcher=claim_searcher)
+
+    elif args.stage == 'verification':
+        # Initialize claim verifier
+        claim_verifier = ClaimVerifier(model_name=args.model_name_verification, label_n=args.label_n,
+                                       cache_dir=args.cache_dir, demon_dir=args.demon_dir)
+        output_data = run_verification(data=input_data, claim_verifier=claim_verifier, search_res_num=args.search_res_num)
+
+    elif args.stage == 'evaluation':
+        metrics_dict = evaluate(input_data)
+    
+    if args.stage != 'evaluation':
+        with open(args.output_file, "w") as f:
+            for dict_item in output_data:
+                f.write(json.dumps(dict_item) + "\n")
