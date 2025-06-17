@@ -11,7 +11,7 @@ OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
 #     --input_file $INPUT \
 #     --output_file $OUTPUT \
 #     --model_name_extraction "gpt-4o" \
-#     --model_name_verification "gpt-4o-mini" \
+#     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
 #     --specified_number_of_claims 8 \
 #     --label_n 2 \
@@ -21,17 +21,18 @@ OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
 #     --input_file $OUTPUT \
 #     --output_file $OUTPUT \
 #     --model_name_extraction "gpt-4o" \
-#     --model_name_verification "gpt-4o-mini" \
+#     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
 #     --specified_number_of_claims 8 \
 #     --label_n 2 \
-#     --stage "searching"
+#     --stage "searching" \
+#     --search_engine searxng 
 
 # python3 src/pipeline_nli.py \
 #     --input_file $OUTPUT \
 #     --output_file $OUTPUT \
 #     --model_name_extraction "gpt-4o" \
-#     --model_name_verification "gpt-4o-mini" \
+#     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
 #     --specified_number_of_claims 8 \
 #     --label_n 2 \
@@ -41,7 +42,7 @@ python3 src/pipeline_nli.py \
     --input_file $OUTPUT \
     --output_file $OUTPUT \
     --model_name_extraction "gpt-4o" \
-    --model_name_verification "gpt-4o-mini" \
+    --model_name_verification "gemini-1.5-flash-latest" \
     --decompose_method "specified_number" \
     --specified_number_of_claims 8 \
     --label_n 2 \
