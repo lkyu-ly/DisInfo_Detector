@@ -73,7 +73,7 @@ def run_searching(data, claim_searcher):
             dict_item["claim_search_results"] = claim_snippets
         except Exception as e:
             logger.error(f"Error processing evidence for claim: {e}")
-            dict_item["claim_search_results"] = []
+            dict_item["claim_search_results"] = {}
 
         return dict_item
 
