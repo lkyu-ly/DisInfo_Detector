@@ -4,13 +4,13 @@ export OPENAI_API_KEY="sk-agEcX3Su78Bu09c2F49978C6Ba424977B936C8710fAb42E0"
 
 # INPUT="./fact_checking_dataset/fact_checking_dataset_2017.jsonl"
 # OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_result.json"
-DATA_PREFIX="./fact_checking_dataset/fact_checking_dataset_2017"
+DATA_PREFIX="./fact_checking_dataset/fact_checking_dataset_2025"
 
 # extraction -> searching -> verification -> evaluation
 
 # python3 src/pipeline_nli.py \
-#     --input_file $INPUT \
-#     --output_file $OUTPUT \
+#     --input_file ${DATA_PREFIX}.jsonl \
+#     --output_file ${DATA_PREFIX}_extract.json \
 #     --model_name_extraction "gpt-4o" \
 #     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
@@ -19,7 +19,7 @@ DATA_PREFIX="./fact_checking_dataset/fact_checking_dataset_2017"
 #     --stage "extraction"
 
 # python3 src/pipeline_nli.py \
-#     --input_file ${DATA_PREFIX}_result.json \
+#     --input_file ${DATA_PREFIX}_extract.json \
 #     --output_file ${DATA_PREFIX}_search.json \
 #     --model_name_extraction "gpt-4o" \
 #     --model_name_verification "gemini-1.5-flash-latest" \

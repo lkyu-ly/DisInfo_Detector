@@ -56,7 +56,7 @@ def run_extraction(
 
     ####### Parallel processing #######
     extracted_claims = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=50) as executor:
         # Submit all tasks to the executor and wrap with tqdm for a progress bar
         futures = [executor.submit(process_claim, item) for item in data]
         for future in tqdm(futures, desc="Processing claims"):
@@ -85,7 +85,7 @@ def run_searching(data, claim_searcher):
 
     ####### Parallel processing #######
     searched_evidence_dict = []
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         # Submit all tasks to the executor and wrap with tqdm for a progress bar
         futures = [executor.submit(process_evidence, item) for item in data]
         for future in tqdm(futures, desc="Processing claims"):
@@ -122,7 +122,7 @@ def run_verification(data, claim_verifier, search_res_num):
     total_resp_tok_cnt = 0
     counter_lock = threading.Lock()  # Lock for protecting counters
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:
         # Submit all tasks to the executor and wrap with tqdm for a progress bar
         futures = [executor.submit(process_verification, item) for item in data]
         for future in tqdm(futures, desc="Processing claims"):
