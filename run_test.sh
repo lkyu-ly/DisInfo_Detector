@@ -18,16 +18,16 @@ DATA_PREFIX="./fact_checking_dataset/fact_checking_dataset_2017"
 #     --label_n 2 \
 #     --stage "extraction"
 
-python3 src/pipeline_nli.py \
-    --input_file ${DATA_PREFIX}_result.json \
-    --output_file ${DATA_PREFIX}_search.json \
-    --model_name_extraction "gpt-4o" \
-    --model_name_verification "gemini-1.5-flash-latest" \
-    --decompose_method "specified_number" \
-    --specified_number_of_claims 8 \
-    --label_n 2 \
-    --stage "searching" \
-    --search_engine searxng 
+# python3 src/pipeline_nli.py \
+#     --input_file ${DATA_PREFIX}_result.json \
+#     --output_file ${DATA_PREFIX}_search.json \
+#     --model_name_extraction "gpt-4o" \
+#     --model_name_verification "gemini-1.5-flash-latest" \
+#     --decompose_method "specified_number" \
+#     --specified_number_of_claims 8 \
+#     --label_n 2 \
+#     --stage "searching" \
+#     --search_engine searxng 
 
 # python3 src/pipeline_nli.py \
 #     --input_file ${DATA_PREFIX}_search.json \
