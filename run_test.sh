@@ -2,8 +2,9 @@ export SERPER_KEY_PRIVATE="0325f2478ebae737e125dafc8d94de5334af1e8d"
 export OPENAI_API_BASE="https://api.shubiaobiao.cn/v1"
 export OPENAI_API_KEY="sk-agEcX3Su78Bu09c2F49978C6Ba424977B936C8710fAb42E0"
 
-INPUT="./fact_checking_dataset/fact_checking_dataset_2017_head.jsonl"
-OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
+# INPUT="./fact_checking_dataset/fact_checking_dataset_2017.jsonl"
+# OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_result.json"
+DATA_PREFIX="./fact_checking_dataset/fact_checking_dataset_2017"
 
 # extraction -> searching -> verification -> evaluation
 
@@ -18,8 +19,8 @@ OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
 #     --stage "extraction"
 
 # python3 src/pipeline_nli.py \
-#     --input_file $OUTPUT \
-#     --output_file $OUTPUT \
+#     --input_file ${DATA_PREFIX}_result.json \
+#     --output_file ${DATA_PREFIX}_search.json \
 #     --model_name_extraction "gpt-4o" \
 #     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
@@ -29,8 +30,8 @@ OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
 #     --search_engine searxng 
 
 # python3 src/pipeline_nli.py \
-#     --input_file $OUTPUT \
-#     --output_file $OUTPUT \
+#     --input_file ${DATA_PREFIX}_search.json \
+#     --output_file ${DATA_PREFIX}_verify.json \
 #     --model_name_extraction "gpt-4o" \
 #     --model_name_verification "gemini-1.5-flash-latest" \
 #     --decompose_method "specified_number" \
@@ -38,12 +39,12 @@ OUTPUT="./fact_checking_dataset/fact_checking_dataset_2017_head_result.json"
 #     --label_n 2 \
 #     --stage "verification"
 
-python3 src/pipeline_nli.py \
-    --input_file $OUTPUT \
-    --output_file $OUTPUT \
-    --model_name_extraction "gpt-4o" \
-    --model_name_verification "gemini-1.5-flash-latest" \
-    --decompose_method "specified_number" \
-    --specified_number_of_claims 8 \
-    --label_n 2 \
-    --stage "evaluation"
+# python3 src/pipeline_nli.py \
+#     --input_file ${DATA_PREFIX}_verify.json \
+#     --output_file ${DATA_PREFIX}_evaluate.json \
+#     --model_name_extraction "gpt-4o" \
+#     --model_name_verification "gemini-1.5-flash-latest" \
+#     --decompose_method "specified_number" \
+#     --specified_number_of_claims 8 \
+#     --label_n 2 \
+#     --stage "evaluation"

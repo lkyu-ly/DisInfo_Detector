@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import threading
 from tqdm import tqdm
 
 from claim_extractor import ClaimExtractor
@@ -73,7 +74,7 @@ def run_searching(data, claim_searcher):
             dict_item["claim_search_results"] = claim_snippets
         except Exception as e:
             logger.error(f"Error processing evidence for claim: {e}")
-            dict_item["claim_search_results"] = []
+            dict_item["claim_search_results"] = {}
 
         return dict_item
 
@@ -119,14 +120,17 @@ def run_verification(data, claim_verifier, search_res_num):
     verification_results = []
     total_prompt_tok_cnt = 0
     total_resp_tok_cnt = 0
+    counter_lock = threading.Lock()  # Lock for protecting counters
+
     with ThreadPoolExecutor(max_workers=10) as executor:
         # Submit all tasks to the executor and wrap with tqdm for a progress bar
         futures = [executor.submit(process_verification, item) for item in data]
         for future in tqdm(futures, desc="Processing claims"):
             verification_result, prompt_tok_cnt, response_tok_cnt = future.result()
             verification_results.append(verification_result)
-            total_prompt_tok_cnt += prompt_tok_cnt
-            total_resp_tok_cnt += response_tok_cnt
+            with counter_lock:
+                total_prompt_tok_cnt += prompt_tok_cnt
+                total_resp_tok_cnt += response_tok_cnt
 
     print(
         f"Claim verification is done! Total cost: {total_prompt_tok_cnt * 10 / 1e6 + total_resp_tok_cnt * 30 / 1e6}"
